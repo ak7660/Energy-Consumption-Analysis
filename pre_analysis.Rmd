@@ -1,0 +1,63 @@
+---
+title: "prelim_analysis"
+output: html_document
+---
+
+## Work Below: Alex Marcek
+```{r}
+# Load in modules
+# Comment
+
+library(dplyr)
+library(ggplot2)
+library(janitor)
+```
+
+
+```{r}
+edata <- read.csv("owid-energy-data.csv")
+
+# Number of unique countries in dataset?
+length(unique(edata$country))
+#str(edata)
+```
+
+```{r}
+# Frequency of countries
+c_freq <- table(edata$country)
+
+# What is the max? 
+c_max <- names(c_freq)[which.max(c_freq)]
+freq <- max(c_freq)
+
+c_max
+freq
+
+# What is the min? 
+c_min <- names(c_freq)[which.min(c_freq)]
+freq2 <- min(c_freq)
+
+c_min
+freq2
+```
+
+```{r}
+# we are particularly interested with country population, gdp and specific energy consumption 
+# lets take a look at primary energy consumption against gdp first.
+
+edata <- clean_names(edata)
+
+edata_filtered <- edata %>%
+  select(
+    country, year, iso_code, population, gdp,
+    primary_energy_consumption, fossil_fuel_consumption,
+    coal_consumption, gas_consumption,
+    renewables_electricity, solar_electricity,
+    wind_electricity, hydro_electricity
+  )
+
+plot(edata_filtered$primary_energy_consumption, edata_filtered$gdp, xlab = "GDP", ylab = "Primary Energy Consumption", main = "Primary Energy Consumption vs GDP of Country")
+
+## It looks like some tranformations may need to be done to address this issue. Our data does not appear to meet the linearity assumtion.
+```
+

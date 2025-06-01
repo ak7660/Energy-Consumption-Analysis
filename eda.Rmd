@@ -1,0 +1,277 @@
+---
+title: "eda"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)   
+library(skimr)        
+library(janitor)      
+```
+
+## Data Import
+
+First, we import the dataset from a local CSV file. The clean_names() function from janitor ensures that variable names are standardized.
+
+```{r}
+energy_raw <- read_csv("owid-energy-data.csv")
+
+#Make column names consistent
+energy <- clean_names(energy_raw)
+
+head(energy)
+```
+
+## Understanding the Dataset and Variables
+
+Here we use skimr to get a quick summary of all variables.
+
+```{r}
+#dim(energy)
+
+#glimpse(energy)
+
+skim(energy)
+
+# This can be used to see some basic summaries for numerical variables 
+#summary(select(energy, where(is.numeric)))
+```
+
+## Selection
+
+Since we have 129 columns, let's focus on ones potentially relevant to our research questions:
+
+```{r}
+eda_df <- energy %>%
+  select(
+    country, year, iso_code, population, gdp,
+    primary_energy_consumption, fossil_fuel_consumption,
+    coal_consumption, gas_consumption,
+    renewables_electricity, solar_electricity,
+    wind_electricity, hydro_electricity
+  )
+```
+
+
+## Basic Summaries & Missingness
+
+```{r}
+summary(eda_df)
+
+# checking missing values
+eda_df %>%
+  summarize_all(~ sum(is.na(.))) %>%
+  gather(key = "column_name", value = "num_missing") %>%
+  arrange(desc(num_missing))
+```
+
+
+## Distribution Plots
+
+We plot the distribution of primary energy consumption.
+
+```{r}
+eda_df %>%
+  filter(!is.na(primary_energy_consumption)) %>%
+  ggplot(aes(x = primary_energy_consumption)) +
+  geom_histogram(bins = 50, fill = "skyblue", color = "black", alpha = 0.7) +
+  scale_x_continuous(labels = scales::comma) +
+  labs(
+    title = "Distribution of Primary Energy Consumption",
+    x = "Primary Energy Consumption (TWh)",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+```
+
+However, the scale is not optmial so a better way would be to use log-scale
+
+```{r}
+eda_df %>%
+  filter(!is.na(primary_energy_consumption) & primary_energy_consumption > 0) %>%
+  ggplot(aes(x = log10(primary_energy_consumption))) +
+  geom_histogram(bins = 50, fill = "skyblue", color = "black", alpha = 0.7) +
+  labs(
+    title = "Distribution of Log(Primary Energy Consumption)",
+    x = "Log10(Primary Energy Consumption)",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+
+## Checking Correlation
+
+
+We can get an idea about the data if we check the correlation between GDP and Primary Energy Consumption
+
+```{r}
+eda_df %>%
+  filter(!is.na(gdp), !is.na(primary_energy_consumption), # Filtering out missing values to avoid infinite or meaningless logs
+         gdp > 0, primary_energy_consumption > 0) %>%
+  ggplot(aes(x = gdp, y = primary_energy_consumption)) +
+  geom_point(alpha = 0.3, color = "blue") +
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+  labs(
+    title = "GDP vs Primary Energy Consumption",
+    x = "GDP",
+    y = "Primary Energy Consumption (TWh)"
+  )
+```
+
+However, log-tranforming can give us a better graph in this case too
+
+```{r}
+eda_df %>%
+  filter(!is.na(gdp), !is.na(primary_energy_consumption),
+         gdp > 0, primary_energy_consumption > 0) %>%
+  ggplot(aes(x = log10(gdp), y = log10(primary_energy_consumption))) +
+  geom_point(alpha = 0.3, color = "blue") +
+  theme_minimal() +
+  labs(
+    title = "Log-Log Plot: GDP vs. Primary Energy Consumption",
+    x = "Log10(GDP)",
+    y = "Log10(Primary Energy Consumption)"
+  )
+```
+
+## Time Trends
+
+We look at how primary energy consumption changes over time for the top gdp countries in the world
+
+```{r}
+top_countries <- eda_df %>%
+  filter(!is.na(gdp), country != "World") %>%  
+  group_by(country) %>%                       
+  summarize(total_gdp = sum(gdp, na.rm = TRUE)) %>% 
+  arrange(desc(total_gdp)) %>%                
+  slice_head(n = 5) %>%                      
+  pull(country)                               
+
+eda_df %>%
+  filter(country %in% top_countries,
+         !is.na(primary_energy_consumption)) %>%
+  ggplot(aes(x = year, y = primary_energy_consumption, color = country)) +
+  geom_line() +
+  labs(
+    title = "Primary Energy Consumption Over Time",
+    x = "Year",
+    y = "Primary Energy Consumption (TWh)"
+  ) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal()
+```
+We can also explore Renewables (e.g., wind, solar, hydro) Over Time for each of the selected country
+
+```{r}
+eda_df %>%
+  filter(country %in% top_countries) %>%
+  select(country, year, renewables_electricity, solar_electricity,
+         wind_electricity, hydro_electricity) %>%
+  pivot_longer(
+    cols = c(renewables_electricity, solar_electricity, wind_electricity, hydro_electricity),
+    names_to = "renewable_type",
+    values_to = "electricity_twh"
+  ) %>%
+  filter(!is.na(electricity_twh)) %>%
+  ggplot(aes(x = year, y = electricity_twh, color = renewable_type)) +
+  geom_line() +
+  facet_wrap(~ country, scales = "free_y") +
+  labs(
+    title = "Trends in Different Renewable Electricity Sources",
+    x = "Year",
+    y = "Electricity (TWh)"
+  ) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal()
+```
+
+
+## Trends (Part2)
+
+Question: Do countries that exhibit rapid population growth also show significant increases in overall energy demand?
+
+Filter the data for the years and for non-missing consumption
+
+```{r}
+energy_growth <- energy %>%
+  filter(year %in% c(2000, 2020)) %>%
+  select(country, year, population, primary_energy_consumption) %>%
+  filter(!is.na(population), !is.na(primary_energy_consumption)) 
+
+```
+
+
+Reshape to wide format: one row per country with columns for 2000 vs 2020
+
+```{r}
+energy_growth_wide <- energy_growth %>%
+  pivot_wider(
+    names_from = year,
+    values_from = c(population, primary_energy_consumption),
+    names_sep = "_"
+  ) %>%
+  # remove any countries for which 2000 or 2020 data is missing
+  filter(!is.na(population_2000), !is.na(population_2020),
+         !is.na(primary_energy_consumption_2000), !is.na(primary_energy_consumption_2020))
+
+```
+
+
+Computing absolute/percentage changes
+
+
+```{r}
+energy_growth_wide <- energy_growth_wide %>%
+  mutate(
+    pop_change = population_2020 - population_2000,
+    energy_change = primary_energy_consumption_2020 - primary_energy_consumption_2000
+    # pop_pct_change = (population_2020 - population_2000) / population_2000 * 100
+    # energy_pct_change = (primary_energy_consumption_2020 - primary_energy_consumption_2000) /
+    #                     primary_energy_consumption_2000 * 100
+  )
+```
+
+
+Correlation & Visualization
+
+```{r}
+cor_test_result <- cor.test(energy_growth_wide$pop_change, energy_growth_wide$energy_change)
+cor_test_result
+
+# Scatter plot with a regression line
+ggplot(energy_growth_wide, aes(x = pop_change, y = energy_change)) +
+  geom_point(alpha = 0.5, color = "forestgreen") +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    title = "Population Growth vs. Energy Demand Growth (2000 - 2020)",
+    x = "Change in Population",
+    y = "Change in Primary Energy Consumption (TWh)"
+  ) +
+  theme_minimal()
+
+
+# Log Transformed graph
+ggplot(energy_growth_wide, aes(x = pop_change, y = energy_change)) +
+  geom_point(alpha = 0.5, color = "forestgreen") +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  scale_x_log10(labels = scales::comma) +  # Logarithmic scale for x-axis
+  scale_y_log10(labels = scales::comma) +  # Logarithmic scale for y-axis
+  labs(
+    title = "Population Growth vs. Energy Demand Growth (2000 - 2020)",
+    x = "Change in Population (Log Scale)",
+    y = "Change in Primary Energy Consumption (Log Scale, TWh)"
+  ) +
+  theme_minimal()
+```
+

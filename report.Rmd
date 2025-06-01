@@ -1,0 +1,840 @@
+---
+title: "Analyzing Global Energy Consumption: Trends, Economic Factors, and Statistical Insights"
+author: "Alex Marcek, Ahmad Khan & Tara Draper"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Introduction
+
+For our project, we examined a data set containing information about the energy consumption of 294 different countries. This data set contains many variables that tell us about the types of energy consumption, as well as variables that provide insights into trends in energy consumption for a particular country. 
+
+This data set is particularly interesting to examine because we can learn a lot about trends in energy consumption over time for particular countries, or on a global scale. We can also examine the relationships between variables, such as whether trends in GDP or population can account for trends in specific types of energy consumption.
+
+All of these countries have a date range for which information about energy consumption is recorded, the maximum of which spans 124 years. A few countries have this amount of data, while the minimum date range is 11 years. The overall shape of this raw data frame is 21,812 observations of 129 variables. As we can see, we have a relatively lengthy data frame with many variables. Furthermore, many columns (relative to a specific country) are completely underpopulated with data, as some countries do not collect data on specific types of energy consumption.
+
+---
+
+
+# Objectives
+
+The sheer size of this dataset required special attention to which variables are useful to us. We will also need to pay special attention to missing data. If we were to simply remove all NA values, we would be left with around 150 rows left. This is a data loss of around 99.3% which is unacceptable for our purposes. Our first objective is to clean the data, or come up with a repeatable method to clean our data to fit our needs. We also aim to run exploratory data analysis and fit some regression models in order to answer the research questions detailed below. To aid in our inference, we will also be constructing confidence intervals and detailed graphs.
+
+---
+
+# Research Questions
+
+We considered five key research questions during our analysis:
+
+1. How has global energy consumption changed over time, and what factors have contributed to these changes?
+2. Is there a relationship between a country's population and its energy consumption patterns?
+3. Does higher GDP always mean higher energy consumption?
+4. Do countries that exhibit rapid population growth also show significant increases in overall energy demand?
+5. How have primary energy consumption trends changed over time for top GDP countries?
+
+---
+
+# Methods
+
+## Data Cleaning
+
+The source data set exhibited significant sparsity due to incomplete data recorded by certain countries or within specific date ranges. Some columns contained only NA values for specific countries, while entire rows consisted of NA values for certain date ranges. For example, the table below highlights the number of missing values in each variable we deemed potentially relevant to our research questions.
+
+```{r, echo=FALSE}
+
+library(tidyverse)   
+library(skimr)        
+library(janitor)
+library(knitr)  # Basic table formatting
+
+# Load and clean the data
+energy_raw <- read_csv("owid-energy-data.csv")
+energy <- clean_names(energy_raw)
+
+# Select relevant columns
+eda_df <- energy %>%
+  select(
+    country, year, iso_code, population, gdp,
+    primary_energy_consumption, fossil_fuel_consumption,
+    coal_consumption, gas_consumption,
+    renewables_electricity, solar_electricity,
+    wind_electricity, hydro_electricity
+  )
+
+# Check missing values and create a summary table
+missing_summary <- eda_df %>%
+  summarize_all(~ sum(is.na(.))) %>%
+  gather(key = "column_name", value = "num_missing") %>%
+  arrange(desc(num_missing))
+
+# Display the table with kable for Word compatibility
+missing_summary %>%
+  kable(format = "markdown", col.names = c("Column Name", "Number of Missing Values"))
+```
+
+
+To address issues with data loss, we created filter functions that allow users to specify which countries to include in their analysis. These filters automatically remove rows with NA values and exclude columns that contain no data for the selected countries. This approach makes the regression analysis more manageable and ensures the data remains as complete as possible.
+
+```{r, echo=FALSE}
+# creating a filter function for single country
+
+filter_nan_single <- function(data, specific_country){
+  
+  # filter 1 - select country
+  ftd_data <- data %>% 
+    filter(data$country == specific_country)
+  
+  #filter 2 - remove rows with no data for all columns
+  ftd_data <- ftd_data %>%
+    filter(rowSums(is.na(.)) < ncol(.))
+  
+  #filter 3 - remove columns with no data
+  ftd_data <- ftd_data %>%
+    select(where(~ !all(is.na(.))))
+}
+```
+
+```{r, echo=FALSE}
+# creating a filter function for filtering multiple countries (conservative with NAN removal)
+
+filter_nan_multi <- function(data, ...){
+  countries <- c(...)
+  
+  # filter 1 - which countries
+  ftd_data <- data %>%
+    filter(country %in% countries)
+  
+  #filter 2 - remove rows with no data for all columns
+  ftd_data <- ftd_data %>%
+    #removing rows in which the rowsum of NA's is equal to (cannot be greater than) the number of columns (all cols in row are NA)
+    filter(rowSums(is.na(.)) < ncol(.)) 
+  
+  #filter 3 - remove columns with no data
+  ftd_data <- ftd_data %>%
+    select(where(~ !all(is.na(.))))
+  
+  return(ftd_data)
+}
+```
+
+```{r, echo=FALSE}
+# creating a filter function for COMPARING multiple countries (More NAN removal)
+
+filter_nan_compare <- function(data, ...){
+  countries <- c(...)
+  
+  # filter 1 - which countries
+  ftd_data <- data %>%
+    filter(country %in% countries)
+  
+  #filter 2 - remove rows with no data for all columns
+  ftd_data <- ftd_data %>%
+    #removing rows in which the rowsum of NA's is equal to (cannot be greater than) the number of columns (all cols in row are NA)
+    filter(rowSums(is.na(.)) < ncol(.)) 
+  
+  #filter 3 - Remove all columns in which at least one of the countries has all NAN for that column
+  ftd_data <- ftd_data %>%
+    select(where(~ all(!is.na(.))))
+  
+  return(ftd_data)
+}
+```
+
+---
+
+## Exploratory Data Analysis (EDA)
+
+In the EDA phase, we used grouping and filtering methods to learn more about the dataset. Visualizations were constructed to reveal trends in the data and specific variables. Log transformations were particularly useful for addressing heavy skews in variable distributions and improving linearity. 
+
+We also answered two of our research questions through higher-level EDA and constructed visualizations to understand time trends in energy consumption.
+
+
+### High-Level Summary of Dataset
+
+
+```{r, echo=FALSE}
+library(DataExplorer)
+library(kableExtra)
+summary_data <- introduce(energy)
+
+transposed_data <- as.data.frame(t(summary_data))
+
+transposed_data %>%
+  kable(format = "pandoc", caption = "Summary of the Dataset") 
+```
+
+
+### Exploring Distributions
+
+We plot the distribution of differnt variables to underdstand the data like primary energy consumption below.
+
+```{r, echo=FALSE}
+
+eda_df %>%
+  filter(!is.na(primary_energy_consumption)) %>%
+  ggplot(aes(x = primary_energy_consumption)) +
+  geom_histogram(bins = 50, fill = "skyblue", color = "black", alpha = 0.7) +
+  scale_x_continuous(labels = scales::comma) +
+  labs(
+    title = "Distribution of Primary Energy Consumption",
+    x = "Primary Energy Consumption (TWh)",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+
+However, the scale is not optimal so a better way would be to use log-scale
+
+```{r, echo=FALSE}
+
+eda_df %>%
+  filter(!is.na(primary_energy_consumption) & primary_energy_consumption > 0) %>%
+  ggplot(aes(x = log10(primary_energy_consumption))) +
+  geom_histogram(bins = 50, fill = "skyblue", color = "black", alpha = 0.7) +
+  labs(
+    title = "Distribution of Log(Primary Energy Consumption)",
+    x = "Log10(Primary Energy Consumption)",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+
+
+### Checking Correlations
+
+We get an idea about the data if we check the correlation between different variables like GDP and Primary Energy Consumption (Again we use a log-transformed graph since that's better suited).
+
+```{r, echo=FALSE}
+
+eda_df %>%
+  filter(!is.na(gdp), !is.na(primary_energy_consumption),
+         gdp > 0, primary_energy_consumption > 0) %>%
+  ggplot(aes(x = log10(gdp), y = log10(primary_energy_consumption))) +
+  geom_point(alpha = 0.3, color = "blue") +
+  theme_minimal() +
+  labs(
+    title = "GDP vs. Primary Energy Consumption",
+    x = "Log10(GDP)",
+    y = "Log10(Primary Energy Consumption)"
+  )
+```
+
+### Time Trends
+
+We look at how primary energy consumption changes over time for the top gdp countries in the world. This help us answer one of our research questions RQ1: *How has global energy consumption changed over time, and what factors have contributed to these changes?* 
+
+```{r, echo=FALSE}
+
+top_countries <- eda_df %>%
+  filter(!is.na(gdp), country != "World") %>%  
+  group_by(country) %>%                       
+  summarize(total_gdp = sum(gdp, na.rm = TRUE)) %>% 
+  arrange(desc(total_gdp)) %>%                
+  slice_head(n = 5) %>%                      
+  pull(country)                               
+
+eda_df %>%
+  filter(country %in% top_countries,
+         !is.na(primary_energy_consumption)) %>%
+  ggplot(aes(x = year, y = primary_energy_consumption, color = country)) +
+  geom_line() +
+  labs(
+    title = "Primary Energy Consumption Over Time",
+    x = "Year",
+    y = "Primary Energy Consumption (TWh)"
+  ) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal()
+```
+
+We can also explore Renewable (e.g., wind, solar, hydro) Over Time for each of the selected country, answering question 5, RQ5: *How have primary energy consumption trends changed over time for top GDP countries?*
+
+```{r, echo=FALSE}
+
+eda_df %>%
+  filter(country %in% top_countries) %>%
+  select(country, year, renewables_electricity, solar_electricity,
+         wind_electricity, hydro_electricity) %>%
+  pivot_longer(
+    cols = c(renewables_electricity, solar_electricity, wind_electricity, hydro_electricity),
+    names_to = "renewable_type",
+    values_to = "electricity_twh"
+  ) %>%
+  filter(!is.na(electricity_twh)) %>%
+  ggplot(aes(x = year, y = electricity_twh, color = renewable_type)) +
+  geom_line() +
+  facet_wrap(~ country, scales = "free_y") +
+  labs(
+    title = "Trends in Different Renewable Electricity Sources",
+    x = "Year",
+    y = "Electricity (TWh)"
+  ) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+### Time Trends 2
+
+To find answer one of our research question RQ4: *Do countries that exhibit rapid population growth also show significant increases in overall energy demand?* we use the following EDA metho:
+1. The dataset is filtered for the years 2000 and 2020, selecting relevant columns and removing rows with missing population or energy consumption data.
+2. The data is reshaped into a wide format to compare values between 2000 and 2020, and changes in population and energy consumption are calculated.
+3. A correlation test is performed to assess the relationship between population growth and energy consumption growth.
+4. Scatter plots with regression lines (linear and log-transformed scales) are created to visualize the relationship and trends.
+
+```{r, echo=FALSE}
+
+energy_growth <- energy %>%
+  filter(year %in% c(2000, 2020)) %>%
+  select(country, year, population, primary_energy_consumption) %>%
+  filter(!is.na(population), !is.na(primary_energy_consumption)) 
+energy_growth_wide <- energy_growth %>%
+  pivot_wider(
+    names_from = year,
+    values_from = c(population, primary_energy_consumption),
+    names_sep = "_"
+  ) %>%
+  # remove any countries for which 2000 or 2020 data is missing
+  filter(!is.na(population_2000), !is.na(population_2020),
+         !is.na(primary_energy_consumption_2000), !is.na(primary_energy_consumption_2020))
+energy_growth_wide <- energy_growth_wide %>%
+  mutate(
+    pop_change = population_2020 - population_2000,
+    energy_change = primary_energy_consumption_2020 - primary_energy_consumption_2000
+    # pop_pct_change = (population_2020 - population_2000) / population_2000 * 100
+    # energy_pct_change = (primary_energy_consumption_2020 - primary_energy_consumption_2000) /
+    #                     primary_energy_consumption_2000 * 100
+  )
+cor_test_result <- cor.test(energy_growth_wide$pop_change, energy_growth_wide$energy_change)
+cor_test_result
+
+
+
+# Log Transformed graph
+ggplot(energy_growth_wide, aes(x = pop_change, y = energy_change)) +
+  geom_point(alpha = 0.5, color = "forestgreen") +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  scale_x_log10(labels = scales::comma) +  # Logarithmic scale for x-axis
+  scale_y_log10(labels = scales::comma) +  # Logarithmic scale for y-axis
+  labs(
+    title = "Population Growth vs. Energy Demand Growth",
+    x = "Change in Population (Log Scale)",
+    y = "Change in Primary Energy Consumption (Log Scale, TWh)"
+  ) +
+  theme_minimal()
+```
+
+---
+
+## Regression Analysis
+
+To address the research questions, we fitted linear regression models to analyze the relationships between variables such as GDP, population, and energy consumption. The log transformations applied during EDA were also incorporated into the regression to mitigate skewness and improve the model fit.
+
+```{r, echo=FALSE}
+library(effsize) # For looking at effect sizes efficiently
+
+energy_raw <- read_csv("owid-energy-data.csv")
+
+#Make column names consistent
+edata <- clean_names(energy_raw)
+
+#head(edata)
+```
+
+### SIMPLE LINEAR REGRESSION CASE
+
+We first try to model Primary Energy Consumption against GDP. These are the results of the SLR.
+
+```{r, echo=FALSE}
+edata1 <- edata %>%
+  select(
+    country, year, iso_code, population, gdp,
+    primary_energy_consumption, fossil_fuel_consumption,
+    coal_consumption, gas_consumption,
+    renewables_electricity, solar_electricity,
+    wind_electricity, hydro_electricity
+  )
+
+# single variable case, (un-transformed)
+
+lmod1 <- lm(primary_energy_consumption~ gdp, data = edata1)
+
+# Load required packages
+library(knitr)
+library(broom)
+library(flextable)
+
+# Convert model summary to tables
+model_summary <- broom::tidy(lmod1)
+
+# Create a nicer formatted table for coefficients with appropriate scientific notation
+coef_table <- flextable(model_summary) %>%
+  set_caption("Coefficient Estimates") %>%
+  colformat_double(j = c("estimate", "std.error", "statistic"), digits = 6) %>%
+  italic(j = 1, part = "header") %>%
+  compose(j = "p.value", 
+          value = as_paragraph(
+            ifelse(model_summary$p.value < 2e-16, 
+                  "< 2e-16", 
+                  format(model_summary$p.value, scientific = TRUE, digits = 2))
+          )) %>%
+  autofit()
+
+# Extract model statistics
+model_stats <- broom::glance(lmod1)
+
+# Create a table for model statistics
+model_stats_table <- flextable(model_stats %>% 
+                              select(r.squared, adj.r.squared, sigma, statistic, p.value, df, df.residual)) %>%
+  set_caption("Model Statistics") %>%
+  colformat_double(j = c("r.squared", "adj.r.squared"), digits = 4) %>%
+  colformat_double(j = c("sigma", "statistic"), digits = 2) %>%
+  compose(j = "p.value", 
+          value = as_paragraph(
+            ifelse(model_stats$p.value < 2e-16, 
+                  "< 2e-16", 
+                  format(model_stats$p.value, scientific = TRUE, digits = 2))
+          )) %>%
+  colformat_double(j = c("df", "df.residual"), digits = 0) %>%
+  autofit()
+
+# Display tables
+coef_table
+model_stats_table
+```
+
+However, this doesn't seem right perticulary the high R-Squared value. Maybe its not suitable for a SLR. We can check this with the following diagnostics.
+
+```{r, echo=FALSE}
+plot(lmod1)
+```
+
+
+
+
+As we can see from the diagnostics run on the first linear model, there are some clear issues with our residual vs fitted plot. We can see that our data plots are clustered on one end of the scale. This is an indicator that our scale may be inappropriate, and we may need to transform the data. There are also clear issues with our qqplot, but we will address the scaling issue first. 
+
+First, lets take a look at what our un-transformed regression line looks like on the plot
+
+```{r, echo=FALSE}
+
+edata1 %>%
+  filter(!is.na(gdp), !is.na(primary_energy_consumption), # Filtering out missing values to avoid infinite or meaningless logs
+         gdp > 0, primary_energy_consumption > 0) %>%
+  ggplot(aes(x = gdp, y = primary_energy_consumption)) +
+  geom_point(alpha = 0.3, color = "blue") +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+  labs(
+    title = "GDP vs Primary Energy Consumption",
+    x = "GDP",
+    y = "Primary Energy Consumption (TWh)"
+  )
+```
+The clustering is causing clear influential points to our model, which may cause it to be much more inaccurate for lower GPDs. Lets fix the scale now and check the regression line. These are the reuslts of SLR on tranmsformed model.
+
+```{r, echo=FALSE}
+
+
+gdp_tr <- log10(edata1$gdp)
+pec_tr <- log10(edata1$primary_energy_consumption)
+
+lmod2 <- lm(pec_tr~ gdp_tr, data = edata1)
+#summary(lmod2)
+library(knitr)
+library(broom)
+library(flextable)
+
+model_summary <- broom::tidy(lmod2)
+model_stats <- broom::glance(lmod2)
+
+# Create a nicer formatted table for coefficients
+coef_table <- flextable(model_summary) %>%
+  set_caption("Coefficient Estimates (Log-Transformed Variables)") %>%
+  colformat_double(j = c("estimate", "std.error", "statistic"), digits = 4) %>%
+  compose(j = "p.value", 
+          value = as_paragraph(
+            ifelse(model_summary$p.value < 2e-16, 
+                  "< 2e-16", 
+                  format(model_summary$p.value, scientific = TRUE, digits = 2))
+          )) %>%
+  add_footer_lines("Both GDP and primary energy consumption were log10-transformed") %>%
+  autofit()
+
+model_stats_table <- flextable(model_stats %>% 
+                              select(r.squared, adj.r.squared, sigma, statistic, p.value, df, df.residual)) %>%
+  set_caption("Model Statistics (Log-Transformed Variables)") %>%
+  colformat_double(j = c("r.squared", "adj.r.squared", "sigma"), digits = 4) %>%
+  colformat_double(j = "statistic", digits = 2) %>%
+  compose(j = "p.value", 
+          value = as_paragraph(
+            ifelse(model_stats$p.value < 2e-16, 
+                  "< 2e-16", 
+                  format(model_stats$p.value, scientific = TRUE, digits = 2))
+          )) %>%
+  colformat_double(j = c("df", "df.residual"), digits = 0) %>%
+  add_footer_lines("Both GDP and primary energy consumption were log10-transformed") %>%
+  autofit()
+
+coef_table
+model_stats_table
+```
+
+We can check the diagnostics on this new model too
+
+```{r, echo=FALSE}
+plot(lmod2)
+```
+The residual vs fitted plot looks much better, but there may still be some issues with non-constant variance. *This leads to the limitation of our model: it will be worse at predicting the primary energy consumption for lower GDP countries*. Our qqplot also looks much better better than it did before. Our line is no longer shallow and our tails look good. 
+
+```{r, echo=FALSE}
+# Great, lets fit a line to our transformed data. 
+
+edata1 %>%
+  filter(!is.na(gdp), !is.na(primary_energy_consumption),
+         gdp > 0, primary_energy_consumption > 0) %>%
+  ggplot(aes(x = log10(gdp), y = log10(primary_energy_consumption))) +
+  geom_point(alpha = 0.3, color = "blue") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  theme_minimal() +  # Add the missing '+' here
+  labs(
+    title = "Log-Log Plot: GDP vs. Primary Energy Consumption",
+    x = "Log10(GDP)",
+    y = "Log10(Primary Energy Consumption)"
+  )
+  
+```
+### Confidence interval for true mean of primary energy consumption
+
+We calculated confidence interval for true mean of primary energy consumption
+
+```{r, echo=FALSE}
+
+data <- edata1$primary_energy_consumption
+
+res <- t.test(data)
+conf_int <- res$conf.int
+
+# confint() gives the confidence intervals for the model coefficients
+lmod2_confint <- confint(lmod2, level = 0.95)
+
+# Convert the confidence intervals to a data frame
+lmod2_table <- data.frame(
+  Coefficient = rownames(lmod2_confint),
+  Lower_Bound = round(lmod2_confint[, 1], 4),
+  Upper_Bound = round(lmod2_confint[, 2], 4)
+)
+
+# Display the table
+kable(lmod2_table, caption = "Confidence Intervals of Regression Coefficients")
+```
+
+### Cohen's d Effect sizes
+
+To answer the third question posed to us, RQ3: *Does higher GDP always mean higher energy consumption?* we took a look at the effect sizes of the GDP and energy consumption data for two high GDP countries. 
+
+```{r, echo=FALSE}
+# Cohen's d Effect sizes
+
+edata2 <- edata1 %>%
+  select(country, year, population, gdp, primary_energy_consumption)
+
+china_data <- edata2 %>%
+  filter(country == "China" ) %>%
+  filter(!is.na(gdp))
+
+us_data <- edata2 %>%
+  filter(country == "United States") %>%
+  filter(!is.na(gdp))
+
+# Compare GDP
+c_gdp <- china_data$gdp
+us_gpd <- us_data$gdp
+
+# Calculate Cohen's d
+cohen_d_result <- cohen.d(c_gdp, us_gpd)
+
+
+# Extract relevant values for the table
+cohen_d_table <- data.frame(
+  Measure = c("Cohen's d", "Effect Size Magnitude", 
+              "Lower Bound (95% CI)", "Upper Bound (95% CI)"),
+  Value = c(
+    round(cohen_d_result$estimate, 4), 
+    cohen_d_result$magnitude, 
+    round(cohen_d_result$conf.int[1], 4), 
+    round(cohen_d_result$conf.int[2], 4)
+  )
+)
+
+# Display the table
+kable(cohen_d_table, caption = "Cohen's d Effect Size for GDP Comparison")
+```
+
+Now, looking at energy consumption
+
+```{r, echo=FALSE}
+china_data2 <- edata2 %>%
+  filter(country == "China" ) %>%
+  filter(!is.na(primary_energy_consumption))
+
+us_data2 <- edata2 %>%
+  filter(country == "United States") %>%
+  filter(!is.na(primary_energy_consumption))
+
+c_encon <- china_data2$primary_energy_consumption
+us_encon <- us_data2$primary_energy_consumption
+
+cohen_d_result_encon <- cohen.d(c_encon, us_encon)
+
+cohen_d_table_encon <- data.frame(
+  Measure = c("Cohen's d", "Effect Size Magnitude", 
+              "Lower Bound (95% CI)", "Upper Bound (95% CI)"),
+  Value = c(
+    round(cohen_d_result_encon$estimate, 4), 
+    cohen_d_result_encon$magnitude, 
+    round(cohen_d_result_encon$conf.int[1], 4), 
+    round(cohen_d_result_encon$conf.int[2], 4)
+  )
+)
+
+kable(cohen_d_table_encon, caption = "Cohen's d Effect Size for Primary Energy Consumption Comparison")
+
+```
+
+As we can see from the output, there is a negligible effect size between the two countries when it comes to GDP, there is a medium effect size when it comes to the energy consumption of the two countries. This means that even though the difference in GDP between the two groups is negligible, the difference in energy consumption is not!
+
+### MULTIPLE LINEAR REGRESSION CASE
+
+To answer the research question, RQ2: *Is there a relationship between a country's economic population and its energy consumption patterns?* We fit a multiple linear regression model using multiple energy consumption methods to try to predict population. These are the reuslts
+
+```{r, echo=FALSE}
+
+lmod3 <- lm(population ~ primary_energy_consumption + fossil_fuel_consumption +
+                      coal_consumption + gas_consumption + renewables_electricity + 
+                      solar_electricity + wind_electricity + hydro_electricity, 
+            data = edata1)
+
+
+model_summary <- broom::tidy(lmod3)
+model_stats <- broom::glance(lmod3)
+
+
+coef_table <- flextable(model_summary) %>%
+  set_caption("Coefficient Estimates") %>%
+  colformat_double(j = c("estimate", "std.error", "statistic"), digits = 4) %>%
+  compose(j = "p.value", 
+          value = as_paragraph(
+            ifelse(model_summary$p.value < 2e-16, 
+                  "< 2e-16", 
+                  format(model_summary$p.value, scientific = TRUE, digits = 2))
+          )) %>%
+  add_footer_lines("The dependent variable is population, and primary energy and other variables are predictors.") %>%
+  autofit()
+
+
+coef_table
+
+model_stats_table <- flextable(model_stats %>% 
+                              select(r.squared, adj.r.squared, sigma, statistic, p.value, df, df.residual)) %>%
+  set_caption("Model Statistics") %>%
+  colformat_double(j = c("r.squared", "adj.r.squared", "sigma"), digits = 4) %>%
+  colformat_double(j = "statistic", digits = 2) %>%
+  compose(j = "p.value", 
+          value = as_paragraph(
+            ifelse(model_stats$p.value < 2e-16, 
+                  "< 2e-16", 
+                  format(model_stats$p.value, scientific = TRUE, digits = 2))
+          )) %>%
+  colformat_double(j = c("df", "df.residual"), digits = 0) %>%
+  add_footer_lines("Summary statistics for the linear regression model.") %>%
+  autofit()
+
+
+model_stats_table
+```
+
+
+### MLR CASE - Accounting for Multi Collinearity
+
+```{r, echo=FALSE}
+linmod_mult<-lm(population~primary_energy_consumption+ fossil_fuel_consumption+
+    coal_consumption+ gas_consumption+
+    renewables_electricity+ solar_electricity+
+    wind_electricity+ hydro_electricity, data= edata)
+
+#summary(linmod_mult)
+```
+
+```{r}
+plot(linmod_mult$fitted.values, linmod_mult$residuals, main = "Fitted vs Residual for MLR")
+```
+
+```{r, echo=FALSE}
+qqnorm(linmod_mult$residuals)
+qqline(linmod_mult$residuals, col="blue")
+```
+Our model has issues, lets test for multicollinearity
+
+```{r, echo=FALSE}
+library(car)
+
+vif(linmod_mult)
+```
+As we can see, all values are above 10, lets remove our most concerning values that are obviously collinear due to its transparent reliance on other variables defined in the model, then re-evaluate. Those variables are primary_energy_consumption and renewables_electricity
+
+Check again
+```{r, echo=FALSE}
+linmod_mult1 <-lm(population ~fossil_fuel_consumption+
+    coal_consumption+ gas_consumption+ solar_electricity+
+    wind_electricity+ hydro_electricity, data= edata)
+
+vif(linmod_mult1)
+```
+This helped a lot, lets remove fossil_fuel_consumption next, since it is the next highest with a still relatively high variance inflation factor of 123.923
+
+```{r, echo=FALSE}
+linmod_mult2 <-lm(population ~ coal_consumption+ gas_consumption+ solar_electricity+
+                               wind_electricity+ hydro_electricity, data= edata)
+
+vif(linmod_mult2)
+```
+Again, with next highest which is hydro_electricity
+
+```{r, echo=FALSE}
+linmod_mult3 <-lm(population ~ coal_consumption+ gas_consumption+ solar_electricity+
+                               wind_electricity, data= edata)
+
+vif(linmod_mult3)
+```
+Again, with wind_electricity
+
+```{r, echo=FALSE}
+linmod_mult4 <-lm(population ~ coal_consumption+ gas_consumption+ solar_electricity, data= edata)
+
+vif(linmod_mult4)
+```
+At this point, there are no major concerns for multicollinearity, though there are still some minor concerns regarding coal_consumption and gas_consumption while solar_electricity is within acceptable VIF range. We will stop removing variables here. *If multicollinearity continues to be a concern, I recommend running a ridge regression*
+
+
+Lets run some diagnostics on this model. 
+```{r, echo=FALSE}
+plot(linmod_mult4$fitted.values, linmod_mult4$residuals, main = "Fitted vs Residuals corrected")
+```
+```{r, echo=FALSE}
+qqnorm(linmod_mult4$residuals)
+qqline(linmod_mult4$residuals, col = "blue")
+```
+
+It looks like were still having the same issues, so we will try scaling the response
+
+```{r, echo=FALSE}
+y_trnsf <- log10(edata1$population)
+coal_trnsf <- na.omit(log10(edata1$coal_consumption))
+gas_trnsf <- na.omit(log10(edata1$gas_consumption))
+solar_trnsf <- na.omit(log10(edata1$solar_electricity))
+
+#Try first with only log scaled response variable
+linmod_mult4_trnsf1 <- lm(y_trnsf ~ coal_consumption+ gas_consumption+ solar_electricity, data= edata)
+
+plot(linmod_mult4_trnsf1$fitted.values, linmod_mult4_trnsf1$residuals, main = "Fitted vs Residuals corrected")
+```
+Results are sub-par, try again scaling predictors as well
+
+```{r, echo=FALSE}
+y_trnsf2 <- na.omit(log10(edata1$population))
+#Try with only log scaled explanatory variable
+
+##linmod_mult4_trnsf2 <- lm(y_trnsf2 ~ coal_trnsf+ gas_trnsf+ solar_trnsf, data= edata)
+
+#plot(linmod_mult4_trnsf2$fitted.values, linmod_mult4_trnsf2$residuals, main = "Fitted vs Residuals corrected")
+```
+
+This cannot be completed because the vectors are different lengths, any attempts to transform will result in more data loss, efforts to remove/add data to make the vectors the same length will be poor data analysis hygiene. Perhaps random sampling our of population to obtain same length, but there may be some hidden statistical/probability theory that is being violated? 
+
+Since non-constant variance as well as clustering still appears to be an issue, I would recommend using other scales to try to un-cluster data then evaluating. If non-constant variance is still a concern, we may consider using weighted regression. 
+
+---
+
+## HYPOTHESIS TEST
+
+$$
+H_0: all\ slope\ coefficients\ are\ equal\ to\ zero
+$$
+
+$$
+H_a: at\ least\ one\ slope\ is\ not\ zero
+$$
+Using the output seen above, we have that
+
+1) F = 2249
+
+2) The degrees of freedom are F(8, 3466)
+
+3) p-value < 2.2e-16
+
+Because the p-value is so small we reject $H_0$. In context, this means that at least one of the coefficients in our full model is nonzero and important in predicting values in population. The null model, with no predictors is not sufficient in predicting the population. 
+
+To answer the research question posed above, we see that all of our predictors that were included in this model are significant except for one. This means that there is a relation between a country's economic population and its energy consumption patterns. For example, an in the context of this model, for every one unit increase in a country's fossil fuel consumption, that country's population would be 325526 greater. Another interesting example, for every one unit increase of hydro electricity consumption, we would expect that country to have 2504760 less population.
+
+---
+
+## Results - A Quick Recap
+
+### Research Question 1: Global Energy Consumption Over Time
+
+- Using exploratory data analysis (EDA) and time trend visualizations, the study examined global energy consumption trends over time.
+- The analysis revealed that global energy consumption has increased significantly, with variations based on economic and demographic factors.
+- The transition from fossil fuels to renewable energy sources was also observed in some regions, though fossil fuels remain dominant in many countries.
+
+### Research Question 2: Relationship Between Population and Energy Consumption
+
+- A multiple linear regression model was used to assess the relationship between population and different types of energy consumption.
+- The results indicated a significant correlation between population size and energy consumption patterns.
+- Countries with larger populations generally consume more energy, though the type of energy used varies by region and level of economic development.
+
+### Research Question 3: Higher GDP = Higher Energy consumption?
+
+- A simple linear regression (SLR) model initially suggested a strong relationship between GDP and energy consumption.
+- However, diagnostic tests revealed issues with the model, leading to a log-transformed regression for better accuracy.
+- Additionally, effect size analysis (Cohen’s d) indicated that while GDP and energy consumption are correlated, high GDP does not always equate to proportionally higher energy consumption.
+
+### Research Question 4: Population Growth and Energy Demand
+
+- The dataset was filtered for the years 2000 and 2020, and correlation analysis was conducted to compare population growth with energy consumption increases.
+- The findings showed a positive correlation, suggesting that countries with rapid population growth tend to experience rising energy demand.
+- However, the strength of this relationship varies depending on economic and policy factors influencing energy efficiency and consumption patterns.
+
+### Research Question 5: Trends in Top GDP Countries
+
+- Time trend visualizations focused on energy consumption in the world’s top GDP countries.
+- The analysis showed that while overall energy consumption has increased, some high-GDP countries have shifted towards renewable energy sources.
+- Differences in energy policies and economic structures have led to varying trends in energy consumption among top economies.
+
+---
+
+## Acknowledgements
+
+This report was written by Alex Marcek, with contributions to research questions by all group members. Regarding GitHub repository contributions:  
+
+- Alex Marcek is the repository administrator and provided the preliminary analysis and data filter template, as well as additional commentary for the pre analysis process (files: `pre_analysis.rmd`, `filter_doc.rmd` and `prelim_regression.rmd`).
+- Ahmad Khan authored all code and commentary for exploratory data analysis (file: `eda.rmd`) and helped in formatting report.
+- Tara Draper authored all code and commentary for linear regression (file: `Energy_Consumption.rmd`) and collaborated to create the presentation
+
+Our project has been documented with all the code available at https://github.com/AlexM866/ISTA321_Midterm1
+
+---
+
+## References
+
+- Dataset: [Our World in Data - Energy](https://ourworldindata.org/energy)
+- Variable Documentation: `energy-data/owid-energy-codebook.csv` at [owid/energy-data](https://github.com/owid/energy-data)
+```

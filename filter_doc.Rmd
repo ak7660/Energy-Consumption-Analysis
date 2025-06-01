@@ -1,0 +1,136 @@
+---
+title: "filter_doc"
+output: html_document
+---
+
+## WORK BELOW: Alex Marcek
+```{r}
+# importing modules
+library(dplyr)
+```
+
+
+```{r}
+# importing dataset
+edata <- read.csv("owid-energy-data.csv")
+head(edata)
+```
+```{r}
+# creating a filter function for single country
+
+filter_nan_single <- function(data, specific_country){
+  
+  # filter 1 - select country
+  ftd_data <- data %>% 
+    filter(data$country == specific_country)
+  
+  #filter 2 - remove rows with no data for all columns
+  ftd_data <- ftd_data %>%
+    filter(rowSums(is.na(.)) < ncol(.))
+  
+  #filter 3 - remove columns with no data
+  ftd_data <- ftd_data %>%
+    select(where(~ !all(is.na(.))))
+}
+```
+
+
+```{r}
+# creating a filter function for filtering multiple countries (conservative with NAN removal)
+
+filter_nan_multi <- function(data, ...){
+  countries <- c(...)
+  
+  # filter 1 - which countries
+  ftd_data <- data %>%
+    filter(country %in% countries)
+  
+  #filter 2 - remove rows with no data for all columns
+  ftd_data <- ftd_data %>%
+    #removing rows in which the rowsum of NA's is equal to (cannot be greater than) the number of columns (all cols in row are NA)
+    filter(rowSums(is.na(.)) < ncol(.)) 
+  
+  #filter 3 - remove columns with no data
+  ftd_data <- ftd_data %>%
+    select(where(~ !all(is.na(.))))
+  
+  return(ftd_data)
+}
+```
+
+```{r}
+# creating a filter function for COMPARING multiple countries (Lots of NAN removal)
+
+filter_nan_compare <- function(data, ...){
+  countries <- c(...)
+  
+  # filter 1 - which countries
+  ftd_data <- data %>%
+    filter(country %in% countries)
+  
+  #filter 2 - remove rows with no data for all columns
+  ftd_data <- ftd_data %>%
+    #removing rows in which the rowsum of NA's is equal to (cannot be greater than) the number of columns (all cols in row are NA)
+    filter(rowSums(is.na(.)) < ncol(.)) 
+  
+  #filter 3 - Remove all columns in which at least one of the countries has all NAN for that column
+  ftd_data <- ftd_data %>%
+    select(where(~ all(!is.na(.))))
+  
+  return(ftd_data)
+}
+```
+
+## IMPORTANT DOCUMENTATION ## 
+Regarding filter 2 (all code chunks) - We have already created an environment through the first filter that only includes the countries that we are interested in. In our data set, many countries have rows (yearly entries) in which there is no data for any columns. If there is absolutely no data for any of the energy types that year, then it is safe to remove that row as there is simply nothing to compare. However, if there is even one entry of data for that year, then we will keep the row. 
+
+Regarding filter 3 (first code chunk) - After the data has passed through the first two filters, if there are any columns (for a specific country) that has absolutely no data for any year, we can safely remove it. If it has data even for one year, we will not remove that year. We cannot use this filter for comparing multiple nations, as some nations will meet
+
+Regarding filter 3 (last code chunk) - After the data has passed though the first two filters, if there are any columns that have all NA values for any specific country, that column will be removed for all countries in that comparisons. We cannot compare data we do not have, so we will elect to remove data generously if we wish to run actual comparisons. 
+
+## IMPORTANT DOCUMENTATION END ##
+
+```{r}
+# example
+edata1 <- filter_nan_multi(edata, "ASEAN (Ember)", "Afghanistan")
+edata2 <- filter_nan_single(edata, "Africa (EI)")
+edata3 <- filter_nan_compare(edata, "Afghanistan", "Africa")
+```
+
+```{r}
+## ALTERNATIVE CODE CHUNCK FOR REMOVING ALL NAN COLUMNS ## (WIP) 
+countries <- c("Afghanistan", "ASEAN (Ember)")
+
+ftd1 <- edata %>%
+  filter(country %in% countries)
+
+ftd2 <- 
+  for (country in countries) {
+    ind_cont_data <- ftd1[ftd1$country == country, ] #subsetting data for individual specified country
+    
+    for (col in names(ftd1)){
+      if (col != "country"){    # we skip over "country" column
+        if(all(is.na(ind_cont_data[[col]]))) {
+          ftd1[[col]] <- NULL
+        }
+      }
+    }
+  }
+```
+
+```{r}
+# some debugging examples
+
+mydata <- data.frame(
+  l1 =  c(NA, NA, NA, NA),
+  l2 =  c(1, NA, NA, NA),
+  l3 =  c(NA, NA, 1, NA),
+  l4 =  c(1, 1, 1, 1)
+)
+
+print(mydata)
+is.na(mydata)
+
+mydata2 <- mydata %>%
+  select(where(~ !all(is.na(.))))
+```

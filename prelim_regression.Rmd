@@ -1,0 +1,274 @@
+---
+title: "prelim_regression"
+output: html_document
+---
+
+```{r}
+library(tidyverse)   
+library(skimr)        
+library(janitor)
+library(effsize)
+```
+
+```{r}
+energy_raw <- read_csv("owid-energy-data.csv")
+
+#Make column names consistent
+edata <- clean_names(energy_raw)
+
+head(edata)
+```
+## SIMPLE LINEAR REGRESSION CASE ##
+```{r}
+edata1 <- edata %>%
+  select(
+    country, year, iso_code, population, gdp,
+    primary_energy_consumption, fossil_fuel_consumption,
+    coal_consumption, gas_consumption,
+    renewables_electricity, solar_electricity,
+    wind_electricity, hydro_electricity
+  )
+```
+
+```{r}
+# single variable case, un-transformed
+
+lmod1 <- lm(primary_energy_consumption~ gdp, data = edata1)
+summary(lmod1)
+```
+```{r}
+plot(lmod1)
+```
+
+```{r}
+edata1 %>%
+  filter(!is.na(gdp), !is.na(primary_energy_consumption), # Filtering out missing values to avoid infinite or meaningless logs
+         gdp > 0, primary_energy_consumption > 0) %>%
+  ggplot(aes(x = gdp, y = primary_energy_consumption)) +
+  geom_point(alpha = 0.3, color = "blue") +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+  labs(
+    title = "GDP vs Primary Energy Consumption",
+    x = "GDP",
+    y = "Primary Energy Consumption (TWh)"
+  )
+```
+```{r}
+# single predictor transformed
+
+gdp_tr <- log10(edata1$gdp)
+pec_tr <- log10(edata1$primary_energy_consumption)
+
+lmod2 <- lm(pec_tr~ gdp_tr, data = edata1)
+summary(lmod2)
+```
+```{r}
+plot(lmod2)
+```
+
+
+```{r}
+edata1 %>%
+  filter(!is.na(gdp), !is.na(primary_energy_consumption),
+         gdp > 0, primary_energy_consumption > 0) %>%
+  ggplot(aes(x = log10(gdp), y = log10(primary_energy_consumption))) +
+  geom_point(alpha = 0.3, color = "blue") +
+  geom_smooth(method = "lm", se = FALSE, color = "red")
+  theme_minimal() +
+  labs(
+    title = "Log-Log Plot: GDP vs. Primary Energy Consumption",
+    x = "Log10(GDP)",
+    y = "Log10(Primary Energy Consumption)"
+  )
+```
+
+```{r}
+## Diagnostics
+
+plot(lmod2$fitted.values, lmod2$residuals, xlab = "Fitted Values",
+                                           ylab = "Residuals",
+                                           main = "Fitted vs Residual plot")
+abline(h=0, col = "red")
+
+# May need to look into box-cox data transformation to resolve non-constant variance. 
+```
+```{r}
+## Diagnostics
+qqnorm(lmod2$residuals)
+qqline(lmod2$residuals, col = 'red')
+```
+```{r}
+## constructing a confidence interval for true mean of primary energy consumption
+
+data <- edata1$primary_energy_consumption
+
+res <- t.test(data)
+conf_int <- res$conf.int
+
+conf_int
+```
+```{r}
+## Confidence interval of our predictor
+confint(lmod2, level = 0.95)
+```
+```{r}
+# Cohen's d Effect sizes
+
+edata2 <- edata1 %>%
+  select(country, year, population, gdp, primary_energy_consumption)
+
+china_data <- edata2 %>%
+  filter(country == "China" ) %>%
+  filter(!is.na(gdp))
+
+us_data <- edata2 %>%
+  filter(country == "United States") %>%
+  filter(!is.na(gdp))
+
+# Compare GDP
+c_gdp <- china_data$gdp
+us_gpd <- us_data$gdp
+
+cohen.d(c_gdp, us_gpd)
+```
+
+```{r}
+# Compare energy consumption #
+china_data2 <- edata2 %>%
+  filter(country == "China" ) %>%
+  filter(!is.na(primary_energy_consumption))
+
+us_data2 <- edata2 %>%
+  filter(country == "United States") %>%
+  filter(!is.na(primary_energy_consumption))
+
+c_encon <- china_data2$primary_energy_consumption
+us_encon <- us_data2$primary_energy_consumption
+
+cohen.d(c_encon, us_encon)
+
+```
+
+## END SIMPLE LINEAR REGRESSION ##
+
+## MULTIPLE LINEAR REGRESSION CASE ## 
+```{r}
+# populated model
+
+lmod3 <- lm(population~ primary_energy_consumption + fossil_fuel_consumption +
+                        coal_consumption + gas_consumption + renewables_electricity + 
+                        solar_electricity + wind_electricity + hydro_electricity, data = edata1)
+
+summary(lmod3)
+```
+## HYPOTHESIS TEST ## 
+
+$$
+H_0: all\ slope\ coefficients\ are\ equal\ to\ zero
+$$
+$$
+H_a: at\ least\ one\ slope\ is\ not\ zero
+$$
+Using the output seen above, we have that
+
+1) F = 2249
+
+2) The degrees of freedom are F(8, 3466)
+
+3) p-value < 2.2e-16
+
+Because the p-value is so small we reject $H_0$. In context, this means that at least one of the coefficients in our full model is nonzero and important in predicting values in population. The null model, with no predictors is not sufficient in predicting the population. 
+
+## MLR CASE - Accounting for Multi Collinearity ##
+
+```{r}
+linmod_mult<-lm(population~primary_energy_consumption+ fossil_fuel_consumption+
+    coal_consumption+ gas_consumption+
+    renewables_electricity+ solar_electricity+
+    wind_electricity+ hydro_electricity, data= edata)
+
+summary(linmod_mult)
+```
+
+```{r}
+plot(linmod_mult$fitted.values, linmod_mult$residuals, main = "Fitted vs Residual for MLR")
+```
+```{r}
+qqnorm(linmod_mult$residuals)
+qqline(linmod_mult$residuals, col="blue")
+```
+Our model has issues, lets test for multicollinearity
+```{r}
+library(car)
+
+vif(linmod_mult)
+```
+As we can see, all values are above 10, lets remove our most concerning values that are obviously collinear due to its transparent reliance on other variables defined in the model, then re-evaluate. Those variables are primary_energy_consumption and renewables_electricity
+
+Check again
+```{r}
+linmod_mult1 <-lm(population ~fossil_fuel_consumption+
+    coal_consumption+ gas_consumption+ solar_electricity+
+    wind_electricity+ hydro_electricity, data= edata)
+
+vif(linmod_mult1)
+```
+This helped a lot, lets remove fossil_fuel_consumption next, since it is the next highest with a still relatively high variance inflation factor of 123.923
+
+```{r}
+linmod_mult2 <-lm(population ~ coal_consumption+ gas_consumption+ solar_electricity+
+                               wind_electricity+ hydro_electricity, data= edata)
+
+vif(linmod_mult2)
+```
+Again, with next highest which is hydro_electricity
+```{r}
+linmod_mult3 <-lm(population ~ coal_consumption+ gas_consumption+ solar_electricity+
+                               wind_electricity, data= edata)
+
+vif(linmod_mult3)
+```
+Again, with wind_electricity
+```{r}
+linmod_mult4 <-lm(population ~ coal_consumption+ gas_consumption+ solar_electricity, data= edata)
+
+vif(linmod_mult4)
+```
+At this point, there are no major concerns for multicollinearity, though there are still some minor concerns regarding coal_consumption and gas_consumption while solar_electricity is within acceptable VIF range. We will stop removing variables here. *If multicollinearity continues to be a concern, I recommend running a ridge regression*
+
+Lets run some diagnostics on this model. 
+```{r}
+plot(linmod_mult4$fitted.values, linmod_mult4$residuals, main = "Fitted vs Residuals corrected")
+```
+```{r}
+qqnorm(linmod_mult4$residuals)
+qqline(linmod_mult4$residuals, col = "blue")
+```
+It looks like were still having the same issues, so we will try scaling the response
+
+```{r}
+y_trnsf <- log10(edata1$population)
+coal_trnsf <- na.omit(log10(edata1$coal_consumption))
+gas_trnsf <- na.omit(log10(edata1$gas_consumption))
+solar_trnsf <- na.omit(log10(edata1$solar_electricity))
+
+#Try first with only log scaled response variable
+linmod_mult4_trnsf1 <- lm(y_trnsf ~ coal_consumption+ gas_consumption+ solar_electricity, data= edata)
+
+plot(linmod_mult4_trnsf1$fitted.values, linmod_mult4_trnsf1$residuals, main = "Fitted vs Residuals corrected")
+```
+Results are sub-par, try again scaling predictors as well
+```{r}
+y_trnsf2 <- na.omit(log10(edata1$population))
+#Try with only log scaled explanatory variable
+
+##linmod_mult4_trnsf2 <- lm(y_trnsf2 ~ coal_trnsf+ gas_trnsf+ solar_trnsf, data= edata)
+
+#plot(linmod_mult4_trnsf2$fitted.values, linmod_mult4_trnsf2$residuals, main = "Fitted vs Residuals corrected")
+```
+This cannot be completed because the vectors are different lengths, any attempts to transform will result in more data loss, efforts to remove/add data to make the vectors the same length will be poor data analysis hygiene. Perhaps random sampling our of population to obtain same length, but there may be some hidden statistical/probability theory that is being violated? 
+
+Since non-constant variance as well as clustering still appears to be an issue, I would recommend using other scales to try to un-cluster data then evaluating. If non-constant variance is still a concern, we may consider using weighted regression. 
